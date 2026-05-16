@@ -406,7 +406,11 @@ def check(
         }
     if effective_group_filter is not None and not results and effective_output_format == "text":
         click.echo(f"No rules matched group '{effective_group_filter}'.")
-    failed = sum(1 for result in results if not result.passed and not result.warned)
+    failed = sum(
+        1
+        for result in results
+        if (not result.passed and not result.warned) or result.timed_out
+    )
     if effective_output_format == "json":
         click.echo(
             json.dumps(

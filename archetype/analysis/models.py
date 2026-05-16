@@ -31,6 +31,8 @@ class RuleResult:
     group: str | None = None
     since_date: str | None = None
     policy: str = "error"
+    timed_out: bool = False
+    timeout_seconds: float | None = None
     filtered_violations: list[Violation] = field(default_factory=list)
     suppressed_violations: list[Violation] = field(default_factory=list)
     violation_context: list[str] = field(default_factory=list)
