@@ -440,6 +440,7 @@ def test_cli_group_flag_with_unknown_group_returns_zero_rules(
     result = runner.invoke(cli, ["check", str(project_path), "--group", "No such group"])
 
     assert result.exit_code == 0
+    assert "No rules matched group 'No such group'." in result.output
     assert "Summary: 0 passed, 0 failed, 0 warned, 0 skipped, 0 total rules." in result.output
 
 

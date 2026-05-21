@@ -108,6 +108,8 @@ def check(
         sys.path = original_sys_path
 
     results = registry.run_all(group_filter=group_filter)
+    if group_filter is not None and not results and output_format == "text":
+        click.echo(f"No rules matched group '{group_filter}'.")
     failed = sum(1 for result in results if not result.passed and not result.warned)
     if output_format == "json":
         click.echo(json.dumps(format_results_json(results), ensure_ascii=False, indent=2))
