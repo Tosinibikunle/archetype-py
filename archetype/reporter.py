@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from archetype.baseline import ViolationCounts
 from archetype.analysis.models import RuleResult, Violation
 
 
@@ -184,6 +185,19 @@ def _result_status(result: RuleResult) -> str:
     return "failed"
 
 
+def _violation_counts(results: list[RuleResult]) -> ViolationCounts:
+    total = 0
+    suppressed = 0
+    for result in results:
+        if result.skipped or result.error is not None:
+            continue
+        total += len(result.violations) + len(result.suppressed_violations)
+        suppressed += len(result.suppressed_violations)
+    return ViolationCounts(total=total, new=total - suppressed, suppressed=suppressed)
+
+
+def format_results_json(
+    results: list[RuleResult], *, violation_counts: ViolationCounts | None = None
 def format_results_json(
     results: list[RuleResult], *, scope: Mapping[str, object] | None = None
 ) -> Mapping[str, object]:
@@ -192,6 +206,7 @@ def format_results_json(
     warned = sum(1 for result in results if result.warned)
     passed = sum(1 for result in results if result.passed and not result.skipped)
     failed = len(results) - passed - warned - skipped
+    counts = violation_counts or _violation_counts(results)
 
     payload: dict[str, object] = {
         "summary": {
@@ -200,6 +215,11 @@ def format_results_json(
             "warned": warned,
             "skipped": skipped,
             "total": len(results),
+        },
+        "violations": {
+            "total": counts.total,
+            "new": counts.new,
+            "suppressed": counts.suppressed,
         },
         "rules": [
             {

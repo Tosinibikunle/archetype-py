@@ -11,6 +11,13 @@ from pathlib import Path
 
 import click
 
+from archetype.baseline import (
+    ViolationCounts,
+    apply_baseline,
+    build_baseline_payload,
+    load_baseline,
+    write_baseline,
+)
 from archetype.analysis.git_utils import get_files_changed_from
 from archetype.dsl.query import load_project
 from archetype.init import (
@@ -95,6 +102,18 @@ def cli() -> None:
     help="Force a fresh import graph rebuild and ignore any cached graph.",
 )
 @click.option(
+    "--write-baseline",
+    "write_baseline_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write current violations to a baseline JSON file.",
+)
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Load baseline JSON and suppress matching existing violations.",
     "--changed-from",
     "changed_from",
     type=str,
@@ -107,6 +126,8 @@ def check(
     quiet: bool,
     output_format: str,
     no_cache: bool,
+    write_baseline_path: Path | None,
+    baseline_path: Path | None,
     changed_from: str | None,
 ) -> None:
     """Run architecture rules against a Python project."""
@@ -149,6 +170,32 @@ def check(
         sys.path = original_sys_path
 
     results = registry.run_all(group_filter=group_filter)
+    violation_counts = ViolationCounts(
+        total=sum(len(result.violations) for result in results),
+        new=sum(len(result.violations) for result in results),
+        suppressed=0,
+    )
+
+    if write_baseline_path is not None:
+        payload = build_baseline_payload(results, project_root=project_path)
+        try:
+            write_baseline(write_baseline_path.resolve(), payload)
+        except OSError as exc:
+            click.echo(f"Error: failed to write baseline {write_baseline_path}: {exc}", err=True)
+            raise SystemExit(1) from exc
+
+    if baseline_path is not None:
+        try:
+            baseline_counter = load_baseline(baseline_path.resolve())
+        except (OSError, ValueError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            raise SystemExit(1) from exc
+        violation_counts = apply_baseline(
+            results,
+            baseline_counter=baseline_counter,
+            project_root=project_path,
+        )
+
     scope_metadata: dict[str, object] | None = None
     if changed_from is not None:
         try:
@@ -179,6 +226,7 @@ def check(
     if output_format == "json":
         click.echo(
             json.dumps(
+                format_results_json(results, violation_counts=violation_counts),
                 format_results_json(results, scope=scope_metadata),
                 ensure_ascii=False,
                 indent=2,

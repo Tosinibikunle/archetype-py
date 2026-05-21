@@ -528,6 +528,7 @@ def test_cli_format_json_outputs_parseable_json(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert isinstance(payload, dict)
     assert "summary" in payload
+    assert "violations" in payload
     assert "rules" in payload
 
 
@@ -546,6 +547,7 @@ def test_cli_format_json_summary_counts_are_correct(tmp_path: Path) -> None:
         "skipped": 1,
         "total": 6,
     }
+    assert payload["violations"] == {"total": 3, "new": 3, "suppressed": 0}
 
 
 def test_cli_format_json_quiet_outputs_parseable_json_with_full_summary(
@@ -567,8 +569,156 @@ def test_cli_format_json_quiet_outputs_parseable_json_with_full_summary(
         "skipped": 1,
         "total": 6,
     }
+    assert payload["violations"] == {"total": 3, "new": 3, "suppressed": 0}
     assert isinstance(payload["rules"], list)
     assert len(payload["rules"]) == 6
+
+
+def test_cli_write_baseline_creates_valid_json_file(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    (project_path / "architecture.py").write_text(
+        "\n".join(
+            [
+                "from archetype import imports, rule",
+                "",
+                "@rule('api-must-not-import-db')",
+                "def _rule_api_not_db() -> None:",
+                "    imports('simple_project.api').must_not_import('simple_project.db')",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "archetype-baseline.json"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        [
+            "check",
+            str(project_path),
+            "--write-baseline",
+            str(baseline_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert payload["version"] == 1
+    assert isinstance(payload["violations"], list)
+    assert len(payload["violations"]) == 1
+    violation = payload["violations"][0]
+    assert violation["rule"] == "api-must-not-import-db"
+    assert violation["module"] == "simple_project.api"
+    assert violation["file"] == "simple_project/api.py"
+    assert violation["line"] == 7
+
+
+def test_cli_baseline_suppresses_existing_violations_and_exits_zero(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    (project_path / "architecture.py").write_text(
+        "\n".join(
+            [
+                "from archetype import imports, rule",
+                "",
+                "@rule('api-must-not-import-db')",
+                "def _rule_api_not_db() -> None:",
+                "    imports('simple_project.api').must_not_import('simple_project.db')",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "archetype-baseline.json"
+    runner = CliRunner()
+
+    write_result = runner.invoke(
+        cli,
+        [
+            "check",
+            str(project_path),
+            "--write-baseline",
+            str(baseline_path),
+        ],
+    )
+    suppress_result = runner.invoke(
+        cli,
+        [
+            "check",
+            str(project_path),
+            "--baseline",
+            str(baseline_path),
+        ],
+    )
+
+    assert write_result.exit_code == 1
+    assert suppress_result.exit_code == 0
+    assert "Summary: 1 passed, 0 failed, 0 warned, 0 skipped, 1 total rules." in suppress_result.output
+
+
+def test_cli_exit_code_is_non_zero_only_for_new_violations_with_baseline(
+    tmp_path: Path,
+) -> None:
+    project_path = _make_project_copy(tmp_path)
+    (project_path / "architecture.py").write_text(
+        "\n".join(
+            [
+                "from archetype import imports, rule",
+                "",
+                "@rule('api-must-not-import-db')",
+                "def _rule_api_not_db() -> None:",
+                "    imports('simple_project.api').must_not_import('simple_project.db')",
+                "",
+                "@rule('main-must-not-import-db')",
+                "def _rule_main_not_db() -> None:",
+                "    imports('simple_project.main').must_not_import('simple_project.db')",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "archetype-baseline.json"
+    runner = CliRunner()
+
+    write_result = runner.invoke(
+        cli,
+        [
+            "check",
+            str(project_path),
+            "--write-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert write_result.exit_code == 1
+
+    (project_path / "simple_project" / "main.py").write_text(
+        "\n".join(
+            [
+                '"""Entry module for the simple fixture project."""',
+                "",
+                "from simple_project import api",
+                "from simple_project import db",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "check",
+            str(project_path),
+            "--baseline",
+            str(baseline_path),
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["summary"]["failed"] == 1
+    assert payload["violations"] == {"total": 2, "new": 1, "suppressed": 1}
 
 
 def test_cli_format_text_behavior_is_unchanged(tmp_path: Path) -> None:
