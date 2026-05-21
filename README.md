@@ -16,6 +16,7 @@
 - [Minimum `architecture.py` Example](#minimum-architecturepy-example)
 - [Features](#features)
 - [Decorators and Commands](#decorators-and-commands)
+- [Baseline Mode](#baseline-mode)
 - [Perfect For](#perfect-for)
 - [Installation](#installation)
 - [Build & Test](#build--test)
@@ -210,6 +211,7 @@ def no_import_cycles() -> None:
 - Warning-level rules
 - Temporary rule skips with context
 - Changed-file enforcement (`since`)
+- Legacy baseline snapshot/suppression (`--write-baseline`, `--baseline`)
 - Pytest integration
 - CI-friendly exit codes
 
@@ -254,8 +256,35 @@ Invalid date '01-01-2026'. Expected format: YYYY-MM-DD.
 | `archetype init [path]` | Detects project structure and generates a starter `architecture.py` file. | `archetype init .` |
 | `archetype check [path]` | Loads `architecture.py` and runs all registered architecture rules. | `archetype check .` |
 | `archetype check [path] --group <name>` | Runs only rules that belong to the specified group. | `archetype check . --group core` |
+| `archetype check [path] --write-baseline <file> --baseline <file>` | Writes a baseline snapshot and suppresses matching legacy violations so only new ones fail. | `archetype check . --baseline archetype-baseline.json` |
 
+## Baseline Mode
 
+Use baseline mode to adopt archetype in legacy repos without failing on pre-existing violations.
+
+Create a baseline snapshot:
+
+```bash
+archetype check . --write-baseline archetype-baseline.json
+```
+
+Run checks against that baseline (matching old violations are suppressed):
+
+```bash
+archetype check . --baseline archetype-baseline.json
+```
+
+You can combine with JSON output to track counts:
+
+```bash
+archetype check . --baseline archetype-baseline.json --format json
+```
+
+JSON output includes:
+- `summary`: rule-level pass/fail/warn/skip counts
+- `violations.total`: total current violations before suppression
+- `violations.new`: violations not found in the baseline
+- `violations.suppressed`: violations matched and suppressed by baseline
 
 ## Perfect For
 
@@ -295,6 +324,8 @@ archetype check .
 
 - `0`: no blocking failures (passes and warnings only)
 - `1`: one or more blocking rule failures
+
+When `--baseline` is used, exit code `1` means there are **new** blocking violations not present in the baseline.
 
 ---
 
