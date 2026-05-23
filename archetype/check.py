@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import uuid
@@ -35,6 +36,80 @@ from archetype.reporter import format_results_json, print_results
 from archetype.rule import registry
 
 T = TypeVar("T")
+_HOOK_BEGIN_MARKER = "# >>> archetype pre-commit hook >>>"
+_HOOK_END_MARKER = "# <<< archetype pre-commit hook <<<"
+
+
+def _run_git(project_path: Path, *args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(project_path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError("Git executable not found on PATH.") from exc
+    except subprocess.CalledProcessError as exc:
+        details = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+        raise ValueError(details) from exc
+    return completed.stdout.strip()
+
+
+def _resolve_git_hook_paths(project_path: Path) -> tuple[Path, Path]:
+    try:
+        repo_root = Path(_run_git(project_path, "rev-parse", "--show-toplevel")).resolve()
+        hook_path_raw = Path(
+            _run_git(project_path, "rev-parse", "--git-path", "hooks/pre-commit")
+        )
+    except ValueError as exc:
+        raise ValueError(f"Unable to resolve git hooks path: {exc}") from exc
+    hook_path = (
+        hook_path_raw
+        if hook_path_raw.is_absolute()
+        else (repo_root / hook_path_raw).resolve()
+    )
+    return repo_root, hook_path
+
+
+def _managed_pre_commit_block() -> str:
+    return "\n".join(
+        [
+            _HOOK_BEGIN_MARKER,
+            "if ! command -v archetype >/dev/null 2>&1; then",
+            "  echo \"archetype: CLI not found on PATH. Install archetype to run checks.\" >&2",
+            "  exit 1",
+            "fi",
+            "",
+            "repo_root=\"$(git rev-parse --show-toplevel 2>/dev/null)\"",
+            "if [ -z \"$repo_root\" ]; then",
+            "  echo \"archetype: unable to resolve repository root.\" >&2",
+            "  exit 1",
+            "fi",
+            "",
+            "archetype check \"$repo_root\"",
+            _HOOK_END_MARKER,
+            "",
+        ]
+    )
+
+
+def _render_pre_commit_hook(existing: str | None) -> tuple[str, str]:
+    block = _managed_pre_commit_block()
+    if existing is None or not existing.strip():
+        return ("#!/bin/sh\n\n" + block, "created")
+
+    if _HOOK_BEGIN_MARKER in existing and _HOOK_END_MARKER in existing:
+        pattern = (
+            rf"{re.escape(_HOOK_BEGIN_MARKER)}.*?{re.escape(_HOOK_END_MARKER)}\n?"
+        )
+        updated = re.sub(pattern, block, existing, flags=re.DOTALL)
+        if updated == existing:
+            return (existing, "unchanged")
+        return (updated, "updated")
+
+    updated = existing.rstrip("\n") + "\n\n" + block
+    return (updated, "appended")
 
 
 def _scope_results_to_changed_files(
@@ -396,4 +471,55 @@ def init(path: Path) -> None:
 
     click.echo(f"architecture.py created at {display_arch_path}")
     click.echo(f"Run archetype check {path} to see results.")
+    raise SystemExit(0)
+
+
+@cli.command("install-hook")
+@click.argument(
+    "path",
+    required=False,
+    default=".",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+def install_hook(path: Path) -> None:
+    """Install an Archetype-managed git pre-commit hook."""
+    target = path.resolve()
+    try:
+        repo_root, hook_path = _resolve_git_hook_paths(target)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    try:
+        hook_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        click.echo(f"Error: unable to create hooks directory '{hook_path.parent}': {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    existing: str | None = None
+    if hook_path.exists():
+        try:
+            existing = hook_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            click.echo(f"Error: unable to read existing hook '{hook_path}': {exc}", err=True)
+            raise SystemExit(1) from exc
+
+    content, status = _render_pre_commit_hook(existing)
+    if status != "unchanged":
+        try:
+            hook_path.write_text(content, encoding="utf-8")
+            hook_path.chmod(hook_path.stat().st_mode | 0o111)
+        except OSError as exc:
+            click.echo(f"Error: unable to write hook '{hook_path}': {exc}", err=True)
+            raise SystemExit(1) from exc
+
+    if status == "created":
+        click.echo(f"Installed pre-commit hook at {hook_path}")
+    elif status == "updated":
+        click.echo(f"Updated Archetype block in pre-commit hook at {hook_path}")
+    elif status == "appended":
+        click.echo(f"Appended Archetype block to existing pre-commit hook at {hook_path}")
+    else:
+        click.echo(f"Archetype pre-commit hook already installed at {hook_path}")
+    click.echo(f"Hook command: archetype check {repo_root}")
     raise SystemExit(0)

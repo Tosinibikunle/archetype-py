@@ -1279,3 +1279,104 @@ def test_cli_changed_from_scope_ignores_excluded_paths(
 
     assert result.exit_code == 0
     assert "Scope: changed-files mode from 'origin/main' (0 changed Python files)" in result.output
+
+
+def test_cli_install_hook_creates_pre_commit_hook(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_path = tmp_path / "project"
+    project_path.mkdir()
+    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+
+    monkeypatch.setattr(
+        "archetype.check._resolve_git_hook_paths",
+        lambda _path: (project_path, hook_path),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["install-hook", str(project_path)])
+
+    assert result.exit_code == 0
+    content = hook_path.read_text(encoding="utf-8")
+    assert content.startswith("#!/bin/sh")
+    assert "# >>> archetype pre-commit hook >>>" in content
+    assert 'archetype check "$repo_root"' in content
+    assert hook_path.stat().st_mode & 0o111
+
+
+def test_cli_install_hook_is_idempotent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_path = tmp_path / "project"
+    project_path.mkdir()
+    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+
+    monkeypatch.setattr(
+        "archetype.check._resolve_git_hook_paths",
+        lambda _path: (project_path, hook_path),
+    )
+    runner = CliRunner()
+
+    first = runner.invoke(cli, ["install-hook", str(project_path)])
+    second = runner.invoke(cli, ["install-hook", str(project_path)])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    content = hook_path.read_text(encoding="utf-8")
+    assert content.count("# >>> archetype pre-commit hook >>>") == 1
+    assert "already installed" in second.output
+
+
+def test_cli_install_hook_appends_to_existing_pre_commit_hook(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_path = tmp_path / "project"
+    project_path.mkdir()
+    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    hook_path.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "echo \"existing pre-commit checks\"",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "archetype.check._resolve_git_hook_paths",
+        lambda _path: (project_path, hook_path),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["install-hook", str(project_path)])
+
+    assert result.exit_code == 0
+    content = hook_path.read_text(encoding="utf-8")
+    assert "existing pre-commit checks" in content
+    assert "# >>> archetype pre-commit hook >>>" in content
+    assert "Appended Archetype block" in result.output
+
+
+def test_cli_install_hook_errors_when_git_paths_cannot_be_resolved(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_path = tmp_path / "project"
+    project_path.mkdir()
+
+    def _raise(_path: Path) -> tuple[Path, Path]:
+        raise ValueError("Unable to resolve git hooks path: fatal: not a git repository")
+
+    monkeypatch.setattr("archetype.check._resolve_git_hook_paths", _raise)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["install-hook", str(project_path)])
+
+    assert result.exit_code == 1
+    assert "not a git repository" in result.output

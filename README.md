@@ -268,6 +268,7 @@ Invalid date '01-01-2026'. Expected format: YYYY-MM-DD.
 | `archetype check [path] --exclude <pattern>` | Excludes paths from analysis and reporting (repeatable). | `archetype check . --exclude /vendor/ --exclude /migrations/` |
 | `archetype check [path] --write-baseline <file> --baseline <file>` | Writes a baseline snapshot and suppresses matching legacy violations so only new ones fail. | `archetype check . --baseline archetype-baseline.json` |
 | `archetype check [path] --changed-from <ref>` | Limits reported violations to files changed since `<ref>` (branch name or commit SHA). | `archetype check . --changed-from origin/main` |
+| `archetype install-hook [path]` | Installs (or updates) a managed git pre-commit hook that runs `archetype check` before each commit. | `archetype install-hook .` |
 
 ### Excluding Paths
 
@@ -316,6 +317,21 @@ Precedence:
 - CLI flags override `archetype.toml`.
 - `archetype.toml` overrides built-in defaults.
 - If config is missing, behavior remains unchanged.
+
+### Pre-commit Hook
+
+Install a git pre-commit hook in one command:
+
+```bash
+archetype install-hook .
+```
+
+Behavior:
+
+- Creates `.git/hooks/pre-commit` if missing.
+- Appends an Archetype-managed block if a custom pre-commit hook already exists.
+- Updates the managed block if Archetype already installed it.
+- Blocks the commit when `archetype check` fails, and prints violations directly in the commit terminal output.
 
 ### Changed-files Mode
 
