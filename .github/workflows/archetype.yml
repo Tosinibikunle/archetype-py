@@ -8,6 +8,9 @@ on:
       - "v*"
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   archetype:
     runs-on: ubuntu-latest
@@ -15,7 +18,9 @@ jobs:
     steps:
       # Pull down your repository code so CI can inspect it.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # Install Python 3.11 so the Archetype CLI can run.
       - name: Set up Python

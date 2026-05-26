@@ -8,11 +8,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       # Checkout repository contents for test execution.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # Install Python runtime used for tests and packaging checks.
       - name: Set up Python
@@ -40,7 +44,9 @@ jobs:
     steps:
       # Checkout repository contents so the package can be built.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # Set up Python for building distribution artifacts.
       - name: Set up Python
@@ -60,5 +66,3 @@ jobs:
       # https://pypi.org/manage/account/publishing
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-# trigger refresh
