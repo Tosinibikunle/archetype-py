@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 - 2026-05-26
+
+### Added
+- Git pre-commit hook integration via `archetype install-hook`.
+- GitHub PR inline annotations support with `--github-annotations`.
+- Baseline mode for legacy repositories via `--write-baseline` and `--baseline`.
+- Project config defaults through `archetype.toml`.
+- Exclude paths support via CLI (`--exclude`) and config.
+- Versioned JSON contract with explicit `schema_version`.
+- Namespace package and monorepo layout support improvements.
+- Changed-files mode with `--changed-from <git-ref>`.
+
+### Changed
+- CI/release workflows expanded to cover new check and packaging behaviors.
+
 ## 0.1.0 - 2026-05-09
 
 ### Added
