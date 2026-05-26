@@ -20,6 +20,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
+          token: ${{ github.token }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       # Install Python 3.11 so the Archetype CLI can run.
