@@ -35,7 +35,10 @@ def _matched_python_files(module_pattern: str) -> list[Path]:
             "  load_project(Path(\".\"))"
         )
 
-    matched_modules = set(find_matching_nodes(module_pattern, list(graph.nodes)))
+    graph_nodes = list(graph.nodes)
+    matched_modules = set(find_matching_nodes(module_pattern, graph_nodes))
+    if not matched_modules:
+        query_module._record_unmatched_pattern(module_pattern, graph_nodes, role="Naming")
     matched: list[Path] = []
     for file_path in sorted(root.rglob("*.py")):
         module_name = path_to_module(file_path, root)

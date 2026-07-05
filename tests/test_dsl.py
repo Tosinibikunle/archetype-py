@@ -127,6 +127,19 @@ def test_must_not_depend_on_violation_message_shows_full_dependency_path() -> No
     assert "simple_project.main → simple_project.api → simple_project.db" in violations[0].message
 
 
+def test_must_not_depend_on_violation_points_to_first_import_in_path() -> None:
+    load_project(_fixture_root())
+
+    with pytest.raises(AssertionError) as excinfo:
+        imports("simple_project.main").must_not_depend_on("simple_project.db")
+
+    violations = getattr(excinfo.value, "violations", [])
+    expected_file = (_fixture_root() / "simple_project" / "main.py").resolve()
+    assert violations
+    assert Path(violations[0].file).resolve() == expected_file
+    assert violations[0].line > 0
+
+
 def test_must_not_depend_on_without_load_project_raises_runtime_error() -> None:
     with pytest.raises(RuntimeError) as excinfo:
         imports("simple_project.api").must_not_depend_on("simple_project.db")

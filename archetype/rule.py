@@ -72,6 +72,19 @@ class RuleRegistry:
                 group=group_name,
                 since_date=since_date,
             )
+        query_module.clear_pattern_diagnostics()
+
+        def with_pattern_diagnostics(result: RuleResult) -> RuleResult:
+            diagnostics = query_module.get_pattern_diagnostics()
+            if not diagnostics:
+                return result
+            result.violation_context = [*diagnostics, *result.violation_context]
+            if result.passed and not result.warned:
+                result.passed = False
+                result.warned = True
+                result.is_warning = True
+            return result
+
         try:
             outcome = func()
             if isinstance(outcome, RuleResult):
@@ -79,17 +92,22 @@ class RuleRegistry:
                     outcome.group = group_name
                 if outcome.since_date is None:
                     outcome.since_date = since_date
-                return outcome
-            return RuleResult(
-                name=rule_name,
-                passed=True,
-                group=group_name,
-                since_date=since_date,
+                return with_pattern_diagnostics(outcome)
+            return with_pattern_diagnostics(
+                RuleResult(
+                    name=rule_name,
+                    passed=True,
+                    group=group_name,
+                    since_date=since_date,
+                )
             )
         except AssertionError as exc:
             violations = getattr(exc, "violations", [])
             filtered_violations = getattr(exc, "filtered_violations", [])
-            violation_context = getattr(exc, "violation_context", [])
+            violation_context = [
+                *query_module.get_pattern_diagnostics(),
+                *getattr(exc, "violation_context", []),
+            ]
             return RuleResult(
                 name=rule_name,
                 passed=False,
@@ -106,6 +124,7 @@ class RuleRegistry:
                 error=exc,
                 group=group_name,
                 since_date=since_date,
+                violation_context=query_module.get_pattern_diagnostics(),
             )
 
     def run_all(self, group_filter: str | None = None, workers: int = 1) -> list[RuleResult]:

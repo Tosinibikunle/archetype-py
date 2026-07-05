@@ -12,7 +12,7 @@ from rich.console import Console
 from archetype.baseline import ViolationCounts
 from archetype.analysis.models import RuleResult, Violation
 
-JSON_SCHEMA_VERSION = 1
+JSON_SCHEMA_VERSION = 2
 
 
 def _extract_target(violation: Violation) -> str:
@@ -232,9 +232,18 @@ def format_results_json(
                 "group": result.group,
                 "since_date": result.since_date,
                 "violations": [
-                    {"module": violation.module, "message": violation.message}
+                    {
+                        "module": violation.module,
+                        "file": None
+                        if str(violation.file) in {"", "<unknown>"}
+                        else str(violation.file),
+                        "line": violation.line,
+                        "target": _extract_target(violation),
+                        "message": violation.message,
+                    }
                     for violation in result.violations
                 ],
+                "diagnostics": list(result.violation_context),
             }
             for result in results
         ],

@@ -183,6 +183,7 @@ def test_format_results_json_contract_shape_is_stable() -> None:
                 "group": None,
                 "since_date": None,
                 "violations": [],
+                "diagnostics": [],
             },
             {
                 "name": "fail-rule",
@@ -192,9 +193,13 @@ def test_format_results_json_contract_shape_is_stable() -> None:
                 "violations": [
                     {
                         "module": "simple_project.api",
+                        "file": "simple_project/api.py",
+                        "line": 1,
+                        "target": "simple_project.db",
                         "message": "Module 'simple_project.api' must not import 'simple_project.db'",
                     }
                 ],
+                "diagnostics": [],
             },
         ],
     }

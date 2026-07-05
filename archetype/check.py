@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TypeVar
 
@@ -22,6 +23,13 @@ from archetype.baseline import (
     write_baseline,
 )
 from archetype.analysis.git_utils import get_files_changed_from
+from archetype.analysis.cache import (
+    compute_file_signatures,
+    get_cache_path,
+    is_cache_valid,
+    load_cached_graph,
+)
+from archetype.analysis.imports import build_import_graph, discover_package_roots
 from archetype.analysis.path_filters import filter_excluded_paths
 from archetype.config import load_check_config
 from archetype.dsl.query import load_project
@@ -421,6 +429,198 @@ def check(
         for annotation in format_github_annotations(results, project_root=project_path):
             click.echo(annotation, err=True)
     raise SystemExit(0 if failed == 0 else 1)
+
+
+def _config_source(project_path: Path) -> str:
+    if (project_path / "archetype.toml").is_file():
+        return "archetype.toml"
+    pyproject_path = project_path / "pyproject.toml"
+    if not pyproject_path.is_file():
+        return "none"
+    try:
+        import tomllib
+
+        pyproject_payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return "pyproject.toml (invalid)"
+    tool = pyproject_payload.get("tool")
+    if isinstance(tool, dict) and isinstance(tool.get("archetype"), dict):
+        return "pyproject.toml [tool.archetype]"
+    return "none"
+
+
+def _analysis_root(project_path: Path) -> Path:
+    structure = detect_project_structure(project_path)
+    if structure.get("layout") == "src":
+        return project_path / "src"
+    return project_path
+
+
+def _relative_or_absolute(path: Path, root: Path) -> str:
+    resolved_path = path.resolve()
+    resolved_root = root.resolve()
+    try:
+        return resolved_path.relative_to(resolved_root).as_posix()
+    except ValueError:
+        return resolved_path.as_posix()
+
+
+@cli.command("doctor")
+@click.argument(
+    "path",
+    required=False,
+    default=".",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+def doctor(path: Path) -> None:
+    """Inspect what Archetype can detect about a project."""
+    project_path = path.resolve()
+    try:
+        config = load_check_config(project_path)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    effective_excludes = config.exclude_patterns or []
+    structure = detect_project_structure(project_path)
+    analysis_root = _analysis_root(project_path)
+    package_roots = discover_package_roots(
+        analysis_root,
+        exclude_patterns=effective_excludes,
+    )
+    graph = build_import_graph(analysis_root, exclude_patterns=effective_excludes)
+    current_signatures = compute_file_signatures(
+        project_path,
+        exclude_patterns=effective_excludes,
+    )
+    _cached_graph, cached_signatures = load_cached_graph(project_path)
+    cache_path = get_cache_path(project_path)
+    if cached_signatures is None:
+        cache_status = "missing"
+    elif is_cache_valid(cached_signatures, current_signatures):
+        cache_status = "valid"
+    else:
+        cache_status = "stale"
+
+    click.echo("Archetype doctor")
+    click.echo("================")
+    click.echo(f"Project: {project_path}")
+    click.echo(
+        "architecture.py: "
+        + ("found" if (project_path / "architecture.py").is_file() else "missing")
+    )
+    click.echo(f"Config: {_config_source(project_path)}")
+    click.echo(f"Layout: {structure.get('layout')}")
+    click.echo(f"Package: {structure.get('top_level_package') or 'not detected'}")
+    click.echo(f"Analysis root: {_relative_or_absolute(analysis_root, project_path)}")
+    click.echo(f"Python files: {structure.get('total_python_files')}")
+    click.echo(f"Modules discovered: {graph.number_of_nodes()}")
+    click.echo(f"Import edges discovered: {graph.number_of_edges()}")
+    click.echo(f"Cache: {cache_status} ({_relative_or_absolute(cache_path, project_path)})")
+
+    click.echo("Excludes:")
+    if effective_excludes:
+        for pattern in effective_excludes:
+            click.echo(f"  - {pattern}")
+    else:
+        click.echo("  - none")
+
+    click.echo("Package roots:")
+    for package_root in package_roots:
+        click.echo(f"  - {_relative_or_absolute(package_root, project_path)}")
+
+    detected_layers = list(structure.get("detected_layers", []))
+    click.echo("Detected layers:")
+    if detected_layers:
+        for layer in detected_layers:
+            click.echo(f"  - {layer}")
+    else:
+        click.echo("  - none")
+
+    internal_paths = list(structure.get("internal_paths", []))
+    click.echo("Internal packages:")
+    if internal_paths:
+        for internal_path in internal_paths:
+            click.echo(f"  - {internal_path}")
+    else:
+        click.echo("  - none")
+    raise SystemExit(0)
+
+
+def _format_graph_json(graph) -> Mapping[str, object]:
+    nodes = sorted(str(node) for node in graph.nodes)
+    edges = []
+    for source, target, data in sorted(graph.edges(data=True)):
+        edges.append(
+            {
+                "source": source,
+                "target": target,
+                "file": data.get("file"),
+                "line": int(data.get("line") or 0),
+            }
+        )
+    return {
+        "schema_version": 1,
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+def _mermaid_node_id(module_name: str) -> str:
+    return "m_" + re.sub(r"[^0-9A-Za-z_]", "_", module_name)
+
+
+def _format_graph_mermaid(graph) -> str:
+    lines = ["graph LR"]
+    for node in sorted(str(node) for node in graph.nodes):
+        lines.append(f'  {_mermaid_node_id(node)}["{node}"]')
+    for source, target in sorted(graph.edges):
+        lines.append(f"  {_mermaid_node_id(source)} --> {_mermaid_node_id(target)}")
+    return "\n".join(lines)
+
+
+@cli.command("graph")
+@click.argument(
+    "path",
+    required=False,
+    default=".",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "mermaid"]),
+    default="mermaid",
+    show_default=True,
+    help="Graph output format.",
+)
+@click.option(
+    "--exclude",
+    "exclude_patterns",
+    type=str,
+    multiple=True,
+    help="Exclude path pattern from analysis (repeatable).",
+)
+def graph(path: Path, output_format: str, exclude_patterns: tuple[str, ...]) -> None:
+    """Export the discovered local import graph."""
+    project_path = path.resolve()
+    try:
+        config = load_check_config(project_path)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    effective_excludes = list(exclude_patterns) or list(config.exclude_patterns or [])
+    import_graph = build_import_graph(
+        _analysis_root(project_path),
+        exclude_patterns=effective_excludes,
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(_format_graph_json(import_graph), ensure_ascii=False, indent=2))
+    else:
+        click.echo(_format_graph_mermaid(import_graph))
+    raise SystemExit(0)
 
 
 @cli.command("init")

@@ -38,6 +38,14 @@ class ModuleBoundaryRule:
         all_nodes = list(self.graph.nodes)
         parent_nodes = set(find_matching_nodes(parent_pattern, all_nodes))
         protected_nodes = set(find_matching_nodes(self.protected_pattern, all_nodes))
+        if not parent_nodes:
+            query_module._record_unmatched_pattern(parent_pattern, all_nodes, role="Parent")
+        if not protected_nodes:
+            query_module._record_unmatched_pattern(
+                self.protected_pattern,
+                all_nodes,
+                role="Protected",
+            )
 
         for source, target in self.graph.edges:
             source_in_parent = source in parent_nodes

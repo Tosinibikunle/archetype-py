@@ -62,6 +62,20 @@ def test_no_cycles_violation_message_shows_full_human_readable_chain(tmp_path: P
     assert parts[0] == parts[-1]
 
 
+def test_no_cycles_violation_includes_source_location(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    _add_simple_project_cycle(project_path)
+    load_project(project_path)
+
+    with pytest.raises(AssertionError) as excinfo:
+        no_cycles()
+
+    violations = getattr(excinfo.value, "violations", [])
+    assert violations
+    assert str(violations[0].file) != "<unknown>"
+    assert violations[0].line > 0
+
+
 def test_no_cycles_with_pattern_ignores_cycles_outside_pattern(tmp_path: Path) -> None:
     project_path = _make_project_copy(tmp_path)
 
