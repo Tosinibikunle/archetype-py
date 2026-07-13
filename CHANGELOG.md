@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Added per-rule `error`, `warning`, and `off` policies via `archetype.toml`
+  for gradual rule adoption and rollout control. (#64)
+
+### Documentation
+- Documented current `archetype check` flags, including `--group`,
+  `--format json`, `--quiet`, and `--no-cache` examples. (#42)
+
 ## 0.4.0 - 2026-07-05
 
 ### Added
