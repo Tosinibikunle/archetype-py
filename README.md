@@ -219,6 +219,9 @@ def no_import_cycles() -> None:
 - Changed-file enforcement (`since`)
 - Legacy baseline snapshot/suppression (`--write-baseline`, `--baseline`)
 - Diff-scoped checks (`--changed-from <ref>`)
+- Project diagnostics (`archetype doctor`)
+- Import graph export (`archetype graph --format mermaid|json`)
+- Unmatched pattern warnings with suggestions
 - First-class project config defaults (`archetype.toml`)
 - Path exclusions (`--exclude`, `archetype.toml`, legacy `[tool.archetype].exclude`)
 - Pytest integration
@@ -269,7 +272,28 @@ Invalid date '01-01-2026'. Expected format: YYYY-MM-DD.
 | `archetype check [path] --write-baseline <file> --baseline <file>` | Writes a baseline snapshot and suppresses matching legacy violations so only new ones fail. | `archetype check . --baseline archetype-baseline.json` |
 | `archetype check [path] --changed-from <ref>` | Limits reported violations to files changed since `<ref>` (branch name or commit SHA). | `archetype check . --changed-from origin/main` |
 | `archetype check [path] --github-annotations` | Emits GitHub Actions inline annotations (`::error`/`::warning`) for PR diffs. | `archetype check . --github-annotations` |
+| `archetype doctor [path]` | Shows detected layout, package roots, modules, import edges, config, cache status, and architecture file status. | `archetype doctor .` |
+| `archetype graph [path] --format mermaid\|json` | Exports the discovered local import graph for docs, debugging, or integrations. | `archetype graph . --format mermaid` |
 | `archetype install-hook [path]` | Installs (or updates) a managed git pre-commit hook that runs `archetype check` before each commit. | `archetype install-hook .` |
+
+### Diagnostics
+
+When a rule does not behave as expected, inspect what Archetype sees:
+
+```bash
+archetype doctor .
+```
+
+To inspect or document module dependencies, export the import graph:
+
+```bash
+archetype graph . --format mermaid
+archetype graph . --format json
+```
+
+If a source, target, layer, boundary, cycle, or naming pattern matches no
+modules, Archetype reports a warning with likely suggestions instead of letting
+the rule silently pass.
 
 ### Excluding Paths
 

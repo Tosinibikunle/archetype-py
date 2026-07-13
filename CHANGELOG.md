@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0 - 2026-07-05
+
+### Added
+- `archetype doctor` command for inspecting detected layout, package roots,
+  modules, import edges, config source, excludes, cache status, layers, and
+  internal packages.
+- `archetype graph` command for exporting the discovered import graph as
+  Mermaid or JSON.
+- Unmatched pattern diagnostics for rule source, target, allowed, layer,
+  boundary, cycle, and naming patterns.
+- Pattern suggestions for likely misspellings when a rule pattern matches no
+  modules.
+- JSON report schema v2 with violation `file`, `line`, `target`, and per-rule
+  `diagnostics` fields.
+
+### Changed
+- Transitive dependency violations now point to the first import statement in
+  the forbidden dependency path.
+- Layering violations now include the source file and line for the offending
+  import.
+- Circular import violations now include a source file and line instead of
+  reporting `<unknown>`.
+- Rules with unmatched patterns now report as warnings instead of silently
+  passing.
+
 ## 0.3.0 - 2026-05-26
 
 ### Added

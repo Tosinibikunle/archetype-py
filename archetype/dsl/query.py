@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import networkx as nx
@@ -16,12 +17,13 @@ from archetype.analysis.cache import (
 from archetype.analysis.imports import build_import_graph
 from archetype.analysis.models import Violation
 from archetype.analysis.path_filters import normalize_exclude_patterns
-from archetype.analysis.pattern import find_matching_nodes, validate_pattern
+from archetype.analysis.pattern import find_matching_nodes, suggest_patterns, validate_pattern
 
 _current_graph: nx.DiGraph | None = None
 _current_root: Path | None = None
 _project_root: Path | None = None
 _exclude_patterns: tuple[str, ...] = ()
+_pattern_state = threading.local()
 
 
 def _not_loaded_project_message() -> str:
@@ -39,6 +41,32 @@ def _not_loaded_project_message() -> str:
         "  from pathlib import Path\n"
         "  load_project(Path(\".\"))"
     )
+
+
+def clear_pattern_diagnostics() -> None:
+    """Clear pattern diagnostics recorded while evaluating one rule."""
+    setattr(_pattern_state, "diagnostics", [])
+
+
+def get_pattern_diagnostics() -> list[str]:
+    """Return pattern diagnostics recorded while evaluating one rule."""
+    return list(getattr(_pattern_state, "diagnostics", []))
+
+
+def _record_unmatched_pattern(
+    pattern: str,
+    all_nodes: list[str],
+    *,
+    role: str,
+) -> None:
+    suggestions = suggest_patterns(pattern, all_nodes)
+    message = f"{role} pattern '{pattern}' matched 0 modules."
+    if suggestions:
+        message += f" Did you mean: {', '.join(suggestions)}?"
+    diagnostics = getattr(_pattern_state, "diagnostics", [])
+    if message not in diagnostics:
+        diagnostics.append(message)
+        setattr(_pattern_state, "diagnostics", diagnostics)
 
 
 def load_project(
@@ -102,12 +130,18 @@ class ImportQuery:
         if _current_graph is None:
             raise RuntimeError(_not_loaded_project_message())
         self.graph = _current_graph
-        self.matched_nodes = find_matching_nodes(pattern, list(self.graph.nodes))
+        graph_nodes = list(self.graph.nodes)
+        self.matched_nodes = find_matching_nodes(pattern, graph_nodes)
+        if not self.matched_nodes:
+            _record_unmatched_pattern(pattern, graph_nodes, role="Source")
 
     def must_not_import(self, target_pattern: str) -> None:
         """Assert that matched source modules do not import modules matching target."""
         violations: list[Violation] = []
-        target_nodes = set(find_matching_nodes(target_pattern, list(self.graph.nodes)))
+        graph_nodes = list(self.graph.nodes)
+        target_nodes = set(find_matching_nodes(target_pattern, graph_nodes))
+        if not target_nodes:
+            _record_unmatched_pattern(target_pattern, graph_nodes, role="Target")
 
         for source in self.matched_nodes:
             for target in self.graph.successors(source):
@@ -149,7 +183,10 @@ class ImportQuery:
             raise RuntimeError(_not_loaded_project_message())
 
         violations: list[Violation] = []
-        target_nodes = find_matching_nodes(target_pattern, list(self.graph.nodes))
+        graph_nodes = list(self.graph.nodes)
+        target_nodes = find_matching_nodes(target_pattern, graph_nodes)
+        if not target_nodes:
+            _record_unmatched_pattern(target_pattern, graph_nodes, role="Target")
 
         for source in self.matched_nodes:
             reachable = nx.descendants(self.graph, source)
@@ -157,11 +194,16 @@ class ImportQuery:
                 if target not in reachable:
                     continue
                 path = nx.shortest_path(self.graph, source=source, target=target)
+                violation_file, violation_line = _edge_violation_location(
+                    self.graph,
+                    path[0],
+                    path[1],
+                )
                 violations.append(
                     Violation(
                         module=source,
-                        file=Path("<unknown>"),
-                        line=0,
+                        file=violation_file,
+                        line=violation_line,
                         message=" → ".join(path),
                     )
                 )
@@ -185,7 +227,25 @@ class ImportQuery:
         cycle_nodes = [edge[0] for edge in cycle_edges]
         cycle_nodes.append(cycle_edges[0][0])
         chain = " -> ".join(cycle_nodes)
-        raise AssertionError(f"Import cycle detected: {chain}")
+        violation_file, violation_line = _edge_violation_location(
+            self.graph,
+            cycle_edges[0][0],
+            cycle_edges[0][1],
+        )
+        exc = AssertionError(f"Import cycle detected: {chain}")
+        setattr(
+            exc,
+            "violations",
+            [
+                Violation(
+                    module=cycle_edges[0][0],
+                    file=violation_file,
+                    line=violation_line,
+                    message=chain,
+                )
+            ],
+        )
+        raise exc
 
     def must_only_import_from(self, *allowed_patterns: str) -> None:
         """Assert that matched source modules import only from allowed targets."""
@@ -193,7 +253,10 @@ class ImportQuery:
         allowed_nodes: set[str] = set()
         graph_nodes = list(self.graph.nodes)
         for allowed_pattern in allowed_patterns:
-            allowed_nodes.update(find_matching_nodes(allowed_pattern, graph_nodes))
+            matches = find_matching_nodes(allowed_pattern, graph_nodes)
+            if not matches:
+                _record_unmatched_pattern(allowed_pattern, graph_nodes, role="Allowed")
+            allowed_nodes.update(matches)
 
         for source in self.matched_nodes:
             for target in self.graph.successors(source):

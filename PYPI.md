@@ -62,6 +62,9 @@ def layer_order() -> None:
 - Baseline adoption for legacy codebases (`--write-baseline`, `--baseline`)
 - Changed-files scope mode (`--changed-from <git-ref>`)
 - GitHub Actions inline PR annotations (`--github-annotations`)
+- Project diagnostics with `archetype doctor`
+- Import graph export with `archetype graph --format mermaid|json`
+- Unmatched pattern warnings with suggestions for likely misspellings
 - Path exclusions via CLI (`--exclude`) and config
 - Project config defaults through `archetype.toml`
 - Git pre-commit hook installer (`archetype install-hook`)

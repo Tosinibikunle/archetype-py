@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import archetype.dsl.query as query_module
 from archetype.analysis.models import Violation
 from archetype.analysis.pattern import find_matching_nodes
@@ -40,15 +38,34 @@ class LayerOrderRule:
             for lower_pattern in self.layer_patterns[upper_index + 1 :]:
                 lower_nodes = find_matching_nodes(lower_pattern, all_nodes)
                 upper_nodes = set(find_matching_nodes(upper_pattern, all_nodes))
+                if not lower_nodes:
+                    query_module._record_unmatched_pattern(
+                        lower_pattern,
+                        all_nodes,
+                        role="Layer",
+                    )
+                if not upper_nodes:
+                    query_module._record_unmatched_pattern(
+                        upper_pattern,
+                        all_nodes,
+                        role="Layer",
+                    )
 
                 for source in lower_nodes:
                     for target in graph.successors(source):
                         if target in upper_nodes:
+                            violation_file, violation_line = (
+                                query_module._edge_violation_location(
+                                    graph,
+                                    source,
+                                    target,
+                                )
+                            )
                             violations.append(
                                 Violation(
                                     module=source,
-                                    file=Path("<unknown>"),
-                                    line=0,
+                                    file=violation_file,
+                                    line=violation_line,
                                     message=(
                                         f"Layering violation (upward dependency): lower layer "
                                         f"'{lower_pattern}' module '{source}' imports upper layer "

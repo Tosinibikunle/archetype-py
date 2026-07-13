@@ -65,6 +65,8 @@ def test_violation_message_includes_source_target_and_direction(tmp_path: Path) 
     assert "simple_project.db" in violations[0].message
     assert "simple_project.api" in violations[0].message
     assert "upward" in violations[0].message
+    assert Path(violations[0].file).resolve() == db_file.resolve()
+    assert violations[0].line > 0
 
     db_file.write_text(original, encoding="utf-8")
 

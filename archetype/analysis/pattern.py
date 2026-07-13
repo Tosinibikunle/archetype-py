@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from difflib import get_close_matches
 from functools import lru_cache
 from re import Pattern
 
@@ -102,3 +103,22 @@ def find_matching_nodes(pattern: str, all_nodes: list[str]) -> list[str]:
     validate_pattern(pattern)
     regex = pattern_to_regex(pattern)
     return [node for node in all_nodes if regex.fullmatch(node)]
+
+
+def suggest_patterns(pattern: str, all_nodes: list[str], *, limit: int = 3) -> list[str]:
+    """Return close module-name suggestions for an unmatched pattern."""
+    if not all_nodes:
+        return []
+
+    literal_pattern = pattern.replace("**", "").replace("*", "")
+    literal_pattern = literal_pattern.strip(".")
+    if not literal_pattern:
+        return []
+
+    suggestions = get_close_matches(literal_pattern, all_nodes, n=limit, cutoff=0.35)
+    if suggestions:
+        return suggestions
+
+    first_segment = literal_pattern.split(".", 1)[0]
+    prefix_matches = [node for node in all_nodes if node.split(".", 1)[0] == first_segment]
+    return prefix_matches[:limit]

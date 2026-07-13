@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import networkx as nx
 
 import archetype.dsl.query as query_module
@@ -44,6 +42,12 @@ def no_cycles(module_pattern: str | None = None) -> None:
         target_graph = graph
     else:
         matched_nodes = find_matching_nodes(module_pattern, list(graph.nodes))
+        if not matched_nodes:
+            query_module._record_unmatched_pattern(
+                module_pattern,
+                list(graph.nodes),
+                role="Cycle",
+            )
         target_graph = graph.subgraph(matched_nodes).copy()
 
     raw_cycles = list(nx.simple_cycles(target_graph))
@@ -61,11 +65,16 @@ def no_cycles(module_pattern: str | None = None) -> None:
 
         chain_nodes = list(normalized) + [normalized[0]]
         chain = " imports ".join(chain_nodes)
+        violation_file, violation_line = query_module._edge_violation_location(
+            graph,
+            chain_nodes[0],
+            chain_nodes[1],
+        )
         violations.append(
             Violation(
                 module=normalized[0],
-                file=Path("<unknown>"),
-                line=0,
+                file=violation_file,
+                line=violation_line,
                 message=chain,
             )
         )

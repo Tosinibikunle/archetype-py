@@ -144,6 +144,31 @@ def test_cli_prints_violation_messages_for_failing_rules(tmp_path: Path) -> None
     assert "imports simple_project.db" in result.output
 
 
+def test_cli_warns_when_rule_pattern_matches_no_modules(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    (project_path / "architecture.py").write_text(
+        "\n".join(
+            [
+                "from archetype import imports, rule",
+                "",
+                "@rule('misspelled-source')",
+                "def _rule_misspelled_source() -> None:",
+                "    imports('simple_project.mian').must_not_import('simple_project.db')",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["check", str(project_path)])
+
+    assert result.exit_code == 0
+    assert "⚠ misspelled-source" in result.output
+    assert "Source pattern 'simple_project.mian' matched 0 modules." in result.output
+    assert "simple_project.main" in result.output
+
+
 def test_cli_shows_allowed_set_once_for_must_only_import_from(tmp_path: Path) -> None:
     project_path = _make_project_copy(tmp_path)
     (project_path / "architecture.py").write_text(
@@ -200,6 +225,51 @@ def test_cli_summary_reflects_passing_and_failing_counts(tmp_path: Path) -> None
     assert "✓ pass-rule" in result.output
     assert "✗ fail-rule" in result.output
     assert "Summary: 1 passed, 1 failed, 0 warned, 0 skipped, 2 total rules." in result.output
+
+
+def test_doctor_reports_detected_project_shape(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["doctor", str(project_path)])
+
+    assert result.exit_code == 0
+    assert "Archetype doctor" in result.output
+    assert "architecture.py: missing" in result.output
+    assert "Layout: unknown" in result.output
+    assert "Package: not detected" in result.output
+    assert "Modules discovered:" in result.output
+    assert "Package roots:" in result.output
+
+
+def test_graph_command_exports_mermaid_import_graph(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["graph", str(project_path), "--format", "mermaid"])
+
+    assert result.exit_code == 0
+    assert "graph LR" in result.output
+    assert "simple_project.api" in result.output
+    assert "-->" in result.output
+
+
+def test_graph_command_exports_json_import_graph(tmp_path: Path) -> None:
+    project_path = _make_project_copy(tmp_path)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["graph", str(project_path), "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["schema_version"] == 1
+    assert "simple_project.api" in payload["nodes"]
+    assert any(
+        edge["source"] == "simple_project.api"
+        and edge["target"] == "simple_project.db"
+        and edge["line"] > 0
+        for edge in payload["edges"]
+    )
 
 
 def test_cli_exits_zero_when_only_warned_rules_have_violations(tmp_path: Path) -> None:
@@ -790,7 +860,7 @@ def test_cli_format_flag_is_accepted(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "No such option" not in result.output
     payload = json.loads(result.output)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["summary"]["total"] == 1
 
 
@@ -803,7 +873,7 @@ def test_cli_format_json_outputs_parseable_json(tmp_path: Path) -> None:
 
     payload = json.loads(result.output)
     assert isinstance(payload, dict)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert "summary" in payload
     assert "violations" in payload
     assert "rules" in payload
