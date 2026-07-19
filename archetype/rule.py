@@ -63,7 +63,12 @@ class RuleRegistry:
 
     def _apply_policy(self, result: RuleResult, policy: RulePolicy) -> RuleResult:
         result.policy = policy
-        if policy == "warning" and not result.skipped and not result.passed:
+        if (
+            policy == "warning"
+            and not result.skipped
+            and not result.passed
+            and not result.timed_out
+        ):
             result.warned = True
             result.is_warning = True
         return result
@@ -99,7 +104,7 @@ class RuleRegistry:
         query_module.clear_pattern_diagnostics()
 
         def with_pattern_diagnostics(result: RuleResult) -> RuleResult:
-            diagnostics = query_module.get_pattern_diagnostics()
+            diagnostics = collected_pattern_diagnostics()
             if not diagnostics:
                 return result
             result.violation_context = [*diagnostics, *result.violation_context]
@@ -109,8 +114,54 @@ class RuleRegistry:
                 result.is_warning = True
             return result
 
+        timeout = getattr(func, "_timeout", None)
+        captured_diagnostics: list[str] | None = None
+
+        def collected_pattern_diagnostics() -> list[str]:
+            if captured_diagnostics is not None:
+                return captured_diagnostics
+            return query_module.get_pattern_diagnostics()
+
+        def run_func() -> None | RuleResult:
+            nonlocal captured_diagnostics
+            if timeout is None:
+                return func()
+
+            outcome: None | RuleResult = None
+            caught_error: BaseException | None = None
+
+            def run_rule() -> None:
+                nonlocal outcome, caught_error, captured_diagnostics
+                query_module.clear_pattern_diagnostics()
+                try:
+                    outcome = func()
+                except BaseException as exc:  # noqa: BLE001
+                    caught_error = exc
+                finally:
+                    captured_diagnostics = query_module.get_pattern_diagnostics()
+
+            timeout_seconds = float(timeout)
+            thread = threading.Thread(target=run_rule, daemon=True)
+            thread.start()
+            thread.join(timeout_seconds)
+            if thread.is_alive():
+                return RuleResult(
+                    name=rule_name,
+                    passed=False,
+                    timed_out=True,
+                    timeout_seconds=timeout_seconds,
+                    group=group_name,
+                    since_date=since_date,
+                    policy=policy,
+                )
+            if caught_error is not None:
+                raise caught_error
+            if isinstance(outcome, RuleResult) and outcome.timeout_seconds is None:
+                outcome.timeout_seconds = timeout_seconds
+            return outcome
+
         try:
-            outcome = func()
+            outcome = run_func()
             if isinstance(outcome, RuleResult):
                 if outcome.group is None:
                     outcome.group = group_name
@@ -133,7 +184,7 @@ class RuleRegistry:
             violations = getattr(exc, "violations", [])
             filtered_violations = getattr(exc, "filtered_violations", [])
             violation_context = [
-                *query_module.get_pattern_diagnostics(),
+                *collected_pattern_diagnostics(),
                 *getattr(exc, "violation_context", []),
             ]
             return self._apply_policy(
@@ -157,7 +208,7 @@ class RuleRegistry:
                     error=exc,
                     group=group_name,
                     since_date=since_date,
-                    violation_context=query_module.get_pattern_diagnostics(),
+                    violation_context=collected_pattern_diagnostics(),
                     policy=policy,
                 ),
                 policy,
@@ -194,13 +245,14 @@ class RuleRegistry:
 registry = RuleRegistry()
 
 
-def rule(name: str) -> Callable[[RuleFn], RuleFn]:
+def rule(name: str, *, timeout: float | None = None) -> Callable[[RuleFn], RuleFn]:
     """Decorator for registering architecture rules with a display name."""
 
     def decorator(func: RuleFn) -> RuleFn:
         group_name = _get_current_group()
         setattr(func, "_rule_name", name)
         setattr(func, "_group", group_name)
+        setattr(func, "_timeout", timeout)
 
         @wraps(func)
         def wrapped() -> None | RuleResult:
@@ -208,6 +260,7 @@ def rule(name: str) -> Callable[[RuleFn], RuleFn]:
 
         setattr(wrapped, "_rule_name", name)
         setattr(wrapped, "_group", group_name)
+        setattr(wrapped, "_timeout", timeout)
         if getattr(func, "_skipped", False):
             setattr(wrapped, "_skipped", True)
             setattr(wrapped, "_skip_reason", getattr(func, "_skip_reason", None))

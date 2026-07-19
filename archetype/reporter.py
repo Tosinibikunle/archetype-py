@@ -91,7 +91,22 @@ def _group_passed(results: list[RuleResult]) -> int:
 
 
 def _group_failed(results: list[RuleResult]) -> int:
-    return sum(1 for result in results if not result.passed and not result.warned)
+    return sum(
+        1 for result in results if not result.passed and not result.warned and not result.timed_out
+    )
+
+
+def _group_timed_out(results: list[RuleResult]) -> int:
+    return sum(1 for result in results if result.timed_out)
+
+
+def _format_timeout_seconds(timeout_seconds: float | None) -> str:
+    if timeout_seconds is None:
+        return "<unknown>s"
+    numeric = float(timeout_seconds)
+    if numeric.is_integer():
+        return f"{int(numeric)}s"
+    return f"{numeric:g}s"
 
 
 def _violation_lines(result: RuleResult) -> list[str]:
@@ -130,8 +145,9 @@ def format_results(results: list[RuleResult], quiet: bool = False) -> str:
     lines: list[str] = []
     skipped = sum(1 for result in results if result.skipped)
     warned = sum(1 for result in results if result.warned)
+    timed_out = sum(1 for result in results if result.timed_out)
     passed = sum(1 for result in results if result.passed and not result.skipped)
-    failed = len(results) - passed - warned - skipped
+    failed = len(results) - passed - warned - skipped - timed_out
 
     rendered_sections = 0
     for group_name, group_results in _group_results(results):
@@ -152,6 +168,12 @@ def format_results(results: list[RuleResult], quiet: bool = False) -> str:
                     line += f" ({result.skip_reason})"
                 lines.append(line)
                 continue
+            if result.timed_out:
+                lines.append(
+                    f"  ⏱ {_format_rule_name(result)} "
+                    f"(timed out after {_format_timeout_seconds(result.timeout_seconds)})"
+                )
+                continue
 
             if result.is_warning:
                 symbol = "⚠"
@@ -167,13 +189,24 @@ def format_results(results: list[RuleResult], quiet: bool = False) -> str:
                 if result.error is not None:
                     lines.append(f"    - Rule error: {result.error}")
 
+        timeout_segment = ""
+        group_timed_out = _group_timed_out(visible_group_results)
+        if group_timed_out > 0:
+            label = "timeout" if group_timed_out == 1 else "timeouts"
+            timeout_segment = f", {group_timed_out} {label}"
         lines.append(
-            f"  {_group_passed(visible_group_results)} passed, {_group_failed(visible_group_results)} failed"
+            f"  {_group_passed(visible_group_results)} passed, "
+            f"{_group_failed(visible_group_results)} failed{timeout_segment}"
         )
         rendered_sections += 1
 
+    timeout_summary = ""
+    if timed_out > 0:
+        label = "timeout" if timed_out == 1 else "timeouts"
+        timeout_summary = f", {timed_out} {label}"
     lines.append(
-        f"Summary: {passed} passed, {failed} failed, {warned} warned, {skipped} skipped, {len(results)} total rules."
+        f"Summary: {passed} passed, {failed} failed, {warned} warned, {skipped} skipped"
+        f"{timeout_summary}, {len(results)} total rules."
     )
     return "\n".join(lines)
 
@@ -212,8 +245,9 @@ def format_results_json(
     """Build a JSON-serializable report for rule execution results."""
     skipped = sum(1 for result in results if result.skipped)
     warned = sum(1 for result in results if result.warned)
+    timed_out = sum(1 for result in results if result.timed_out)
     passed = sum(1 for result in results if result.passed and not result.skipped)
-    failed = len(results) - passed - warned - skipped
+    failed = len(results) - passed - warned - skipped - timed_out
     counts = violation_counts or _violation_counts(results)
 
     payload: dict[str, object] = {
@@ -463,8 +497,9 @@ def print_results(results: list[RuleResult], quiet: bool = False) -> None:
     console = Console()
     skipped = sum(1 for result in results if result.skipped)
     warned = sum(1 for result in results if result.warned)
+    timed_out = sum(1 for result in results if result.timed_out)
     passed = sum(1 for result in results if result.passed and not result.skipped)
-    failed = len(results) - passed - warned - skipped
+    failed = len(results) - passed - warned - skipped - timed_out
 
     rendered_sections = 0
     for group_name, group_results in _group_results(results):
@@ -485,6 +520,14 @@ def print_results(results: list[RuleResult], quiet: bool = False) -> None:
                 if result.skip_reason:
                     line += f" ({result.skip_reason})"
                 console.print(f"[dim]{line}[/dim]")
+                continue
+            if result.timed_out:
+                console.print(
+                    "[yellow]"
+                    f"  ⏱ {_format_rule_name(result)} "
+                    f"(timed out after {_format_timeout_seconds(result.timeout_seconds)})"
+                    "[/yellow]"
+                )
                 continue
 
             if result.is_warning:
@@ -522,15 +565,30 @@ def print_results(results: list[RuleResult], quiet: bool = False) -> None:
             if result.error is not None:
                 console.print(f"[red]    - Rule error: {result.error}[/red]")
 
+        timeout_segment = ""
+        group_timed_out = _group_timed_out(visible_group_results)
+        if group_timed_out > 0:
+            label = "timeout" if group_timed_out == 1 else "timeouts"
+            timeout_segment = f", {group_timed_out} {label}"
         console.print(
-            f"[bold]  {_group_passed(visible_group_results)} passed, {_group_failed(visible_group_results)} failed[/bold]"
+            "[bold]"
+            f"  {_group_passed(visible_group_results)} passed, "
+            f"{_group_failed(visible_group_results)} failed{timeout_segment}"
+            "[/bold]"
         )
         rendered_sections += 1
 
-    summary = f"Summary: {passed} passed, {failed} failed, {warned} warned, {skipped} skipped, {len(results)} total rules."
+    timeout_summary = ""
+    if timed_out > 0:
+        label = "timeout" if timed_out == 1 else "timeouts"
+        timeout_summary = f", {timed_out} {label}"
+    summary = (
+        f"Summary: {passed} passed, {failed} failed, {warned} warned, {skipped} skipped"
+        f"{timeout_summary}, {len(results)} total rules."
+    )
     if failed > 0:
         summary_color = "red"
-    elif warned > 0:
+    elif warned > 0 or timed_out > 0:
         summary_color = "yellow"
     else:
         summary_color = "green"
